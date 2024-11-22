@@ -66,7 +66,7 @@ def create_or_update_tool(name, code, description, parameters):
 
 def install_package(package_name):
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        subprocess.check_call(["uv", "pip", "install", package_name])
         return f"Package '{package_name}' installed successfully."
     except Exception as e:
         return f"Error installing package '{package_name}': {e}"
