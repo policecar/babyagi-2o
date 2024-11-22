@@ -35,14 +35,15 @@ BabyAGI 2o is an exploration into creating the simplest self-building autonomous
 2. **Create a Virtual Environment (Optional but Recommended)**
 
    ~~~bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows, use venv\Scripts\activate
+   uv venv
+   source .venv/bin/activate  # On Windows, use .venv\Scripts\activate
    ~~~
 
 3. **Install Dependencies**
 
    ~~~bash
-   pip install litellm
+   uv pip install -U pip
+   uv pip install -r requirements.txt
    ~~~
 
 ### Setting Environment Variables
@@ -86,6 +87,15 @@ Run the application:
 ~~~bash
 python main.py
 ~~~
+
+or with user prompt from file and custom prompt library:
+
+~~~bash
+python main.py -i input.txt -p prompts.yaml
+~~~
+
+Note that if both are given the input file will overwrite the user prompt from the library.
+
 
 #### Option 2: Persistent Setup using a `.env` File (Recommended)
 

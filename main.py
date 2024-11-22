@@ -2,9 +2,10 @@ import os
 import json
 import traceback
 import subprocess
-import sys
+import yaml
 from time import sleep
 from litellm import completion
+from typing import Optional, Dict
 
 
 # ANSI escape codes for color and formatting
@@ -32,6 +33,50 @@ available_api_keys = [
     for key in os.environ.keys()
     if any(pattern in key.upper() for pattern in api_key_patterns)
 ]
+
+
+def get_prompt_from_promptlib(prompt_lib: str) -> Dict[str, str]:
+    """Load prompts from the YAML prompt library with interactive selection."""
+    try:
+        with open(prompt_lib, "r", encoding="utf-8") as f:
+            all_prompts = yaml.safe_load(f)
+            print(f"\n{Colors.OKBLUE}Available prompts:{Colors.ENDC}")
+            for idx, key in enumerate(all_prompts.keys(), 1):
+                print(f"{idx}. {key}")
+            while True:
+                try:
+                    choice = (
+                        int(
+                            input(f"\n{Colors.BOLD}Select prompt number: {Colors.ENDC}")
+                        )
+                        - 1
+                    )
+                    if 0 <= choice < len(all_prompts):
+                        selected_key = list(all_prompts.keys())[choice]
+                        return all_prompts[selected_key]
+                    else:
+                        print(
+                            f"{Colors.FAIL}Invalid choice. Please select a valid prompt number.{Colors.ENDC}"
+                        )
+                except (ValueError, IndexError):
+                    print(
+                        f"{Colors.FAIL}Invalid input. Please enter a number corresponding to the prompt.{Colors.ENDC}"
+                    )
+    except Exception as e:
+        print(f"{Colors.FAIL}Error loading prompts: {e}{Colors.ENDC}")
+        return {"system": "", "user": ""}
+
+
+def read_user_input(input_file: Optional[str] = None) -> str:
+    """Read user input from a file or stdin."""
+    if input_file:
+        try:
+            with open(input_file, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"{Colors.FAIL}Error reading input file: {e}{Colors.ENDC}")
+            return ""
+    return input(f"{Colors.BOLD}Describe the task you want to complete: {Colors.ENDC}")
 
 
 def register_tool(name, func, description, parameters):
@@ -160,51 +205,27 @@ register_tool(
 )
 
 
-# Main loop to handle user input and LLM interaction
-def run_main_loop(user_input):
-    # Include available API keys in the system prompt
-    if available_api_keys:
-        api_keys_info = (
-            "Available API keys:\n"
-            + "\n".join(f"- {key}" for key in available_api_keys)
-            + "\n\n"
-        )
-    else:
-        api_keys_info = "No API keys are available.\n\n"
+def run_main_loop(prompts: Dict[str, str]):
+    """Run the main LM interaction loop."""
 
+    # Include available API keys in the system prompt
+    api_keys_info = (
+        "Available API keys:\n"
+        + "\n".join(f"- {key}" for key in available_api_keys)
+        + "\n\n"
+        if available_api_keys
+        else "No API keys are available.\n\n"
+    )
+
+    # Combine default system prompt with custom prompt from library
+    system_prompt = prompts.get("system", "").format(api_keys_info=api_keys_info)
+
+    # Initialize messages with system prompt and user input
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an AI assistant designed to iteratively build and execute Python functions using tools provided to you. "
-                "Your task is to complete the requested task by creating and using tools in a loop until the task is fully done. "
-                "Do not ask for user input until you find it absolutely necessary. If you need required information that is likely available online, create the required tools to find this information. "
-                "You have the following tools available to start with:\n\n"
-                "1. **create_or_update_tool**: This tool allows you to create new functions or update existing ones. "
-                "You must provide the function name, code, description, and parameters. "
-                "**All four arguments are required**. The 'parameters' argument should be a dictionary defining the parameters the function accepts, following JSON schema format.\n"
-                "Example of 'parameters': {\n"
-                '  "param1": {"type": "string", "description": "Description of param1."},\n'
-                '  "param2": {"type": "integer", "description": "Description of param2."}\n'
-                "}\n"
-                "2. **install_package**: Installs a Python package using pip. Provide the 'package_name' as the parameter.\n"
-                "3. **task_completed**: This tool should be used to signal when you believe the requested task is fully completed.\n\n"
-                f"Here are API keys you have access to: {api_keys_info}"
-                "If you do not know how to use an API, look up the documentation and find examples.\n\n"
-                "Your workflow should include:\n"
-                "- Creating or updating tools with all required arguments.\n"
-                "- Using 'install_package' when a required library is missing.\n"
-                "- Using created tools to progress towards completing the task.\n"
-                "- When creating or updating tools, provide the complete code as it will be used without any edits.\n"
-                "- Handling any errors by adjusting your tools or arguments as necessary.\n"
-                "- **Being token-efficient**: avoid returning excessively long outputs. If a tool returns a large amount of data, consider summarizing it or returning only relevant parts.\n"
-                "- Prioritize using tools that you have access to via the available API keys.\n"
-                "- Signaling task completion with 'task_completed()' when done.\n"
-                "\nPlease ensure that all function calls include all required parameters, and be mindful of token limits when handling tool outputs."
-            ),
-        },
-        {"role": "user", "content": user_input},
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompts.get("user")},
     ]
+
     iteration, max_iterations = 0, 50
     while iteration < max_iterations:
         print(
@@ -252,6 +273,32 @@ def run_main_loop(user_input):
 
 
 if __name__ == "__main__":
-    run_main_loop(
-        input(f"{Colors.BOLD}Describe the task you want to complete: {Colors.ENDC}")
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run the AI assistant with optional file input and prompt library"
     )
+    parser.add_argument(
+        "-i", "--input", help="Path to input file containing user task", type=str
+    )
+    parser.add_argument("-p", "--prompts", help="Path to YAML prompt library", type=str)
+
+    args = parser.parse_args()
+
+    # Try to install yaml if not present
+    try:
+        import yaml
+    except ImportError:
+        print(f"{Colors.WARNING}Installing PyYAML...{Colors.ENDC}")
+        subprocess.check_call(["uv", "pip", "install", "pyyaml"])
+        import yaml
+
+    # Load prompt
+    if args.prompts:
+        prompts = get_prompt_from_promptlib(args.prompts)
+    else:
+        with open("prompts.yaml", "r", encoding="utf-8") as f:
+            prompts = yaml.safe_load(f)["default"]
+
+    prompts["user"] = read_user_input(args.input)
+    run_main_loop(prompts)
